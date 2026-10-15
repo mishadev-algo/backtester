@@ -1,7 +1,7 @@
 """Allowlisted job and report endpoints. Authentication stays at the existing proxy."""
 import json
 from urllib.parse import urlsplit
-from backtest_jobs import Jobs, catalog, validate, ARTIFACTS
+from backtest_jobs import Jobs, catalog, validate, ARTIFACTS, AUDIT_ARTIFACTS
 
 
 def route(handler,method):
@@ -25,7 +25,7 @@ def route(handler,method):
             elif len(parts)==6 and parts[5]=='cancel' and method=='POST':handler.respond(200,jobs.cancel(job['id']))
             elif len(parts)==7 and parts[5]=='files' and parts[6] in ARTIFACTS and method=='GET':
                 file=jobs.root/'runs'/job['id']/parts[6]
-                if job['status']!='succeeded' or not file.is_file():raise KeyError(path)
+                if (job['status']!='succeeded' and parts[6] not in AUDIT_ARTIFACTS) or not file.is_file():raise KeyError(path)
                 handler.respond(200,file.read_bytes(),ARTIFACTS[parts[6]])
             else:raise KeyError(path)
     except KeyError:handler.respond(404,{'error':'Запуск или файл не найден'})

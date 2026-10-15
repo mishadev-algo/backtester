@@ -16,7 +16,7 @@ BATCH_SIZE = 131072
 
 class Cancelled(Exception): pass
 
-def execute(job,store):
+def simulate(request, status, *, manifest=None, collect=True, account=None, cash=False):
     import numpy as np
     import pyarrow.dataset as ds
     from backtester.models import BacktestConfig, BacktestResult, EquityPoint, Bar
@@ -27,13 +27,7 @@ def execute(job,store):
     from backtester.tick_data import inspect_ticks
     from backtester.reporting import write_report
     from backtester.engine import run_backtest
-    request=job['request']; id=job['id']; begun=time.monotonic()
-    def status(stage,progress):
-        if store.get(id)['cancel']:raise Cancelled()
-        if time.monotonic()-begun>7200:raise TimeoutError('Расчёт превысил лимит 2 часа')
-        store.update(id,stage=stage,progress=min(99,progress))
-    status('Проверка целостности данных',1)
-    manifest=inspect_ticks(DATA)
+    manifest=manifest or inspect_ticks(DATA)
     start=datetime.fromisoformat(request['start']).replace(tzinfo=timezone.utc)
     end=datetime.fromisoformat(request['end']).replace(tzinfo=timezone.utc)
     warm=start-timedelta(days=request['warmup_days'])
@@ -43,10 +37,23 @@ def execute(job,store):
     config=BacktestConfig(**{k:request[k] for k in ('initial_cash','commission_bps','spread_bps','slippage_bps')},price_type='bid_ask' if request['strategy']=='s019' else 'bid')
     spec=str(ENGINE/'strategies/s019_v0_4_9.py') if request['strategy']=='s019' else 'sma'
     count=warm_count=0; points=[]; first=None; last=None; bars=[]; current=None
-    state=EquityState(config.initial_cash)
+    state=account['state'] if account else EquityState(config.initial_cash)
     with load_strategy(spec,'ticks' if request['strategy']=='s019' else 'bars') as loaded:
         strategy=loaded.factory(**request['parameters'])
-        broker=OrderBroker(config,strategy.broker_spec) if request['strategy']=='s019' else None
+        broker=(account['broker'] if account else OrderBroker(config,strategy.broker_spec)) if request['strategy']=='s019' else None
+        metrics={}
+        if account:
+            # Old protections execute on the first available OOS quote before the roll.
+            first_batch=next((batch.slice(0,1) for batch in source.scanner(columns=['timestamp','bid','ask','sequence'],filter=(ds.field('timestamp')>=start)&(ds.field('timestamp')<end),batch_size=BATCH_SIZE,use_threads=False,batch_readahead=1,fragment_readahead=1).to_batches() if batch.num_rows),None)
+            if first_batch is None or not first_batch.num_rows:raise ValueError('В окне нет котировок')
+            values={n:first_batch.column(n).to_numpy() for n in first_batch.schema.names}
+            first_tape=QuoteTape(values['timestamp'].astype('datetime64[us]').astype(np.int64),values['bid'],values['ask'],values['sequence'])
+            broker.advance(first_tape.tick(0),int(first_tape.sequence[0]))
+            broker.close_position(reason='walk_forward_roll')
+            broker.cancel_pending(reason='walk_forward_roll')
+            equity=broker.equity();state.peak=max(state.peak,equity)
+            state.max_drawdown=max(state.max_drawdown,(state.peak-equity)/state.peak)
+            state.max_drawdown_usd=max(state.max_drawdown_usd,state.peak-equity)
         # Samples include every callback, interval boundaries and equity extremes.
         # Broker balance and position are constant within each skipped interval.
         for batch in scanner.to_batches():
@@ -62,15 +69,18 @@ def execute(job,store):
                     else:points.append(point)
             if broker:
                 # A batch entirely before start warms indicators without trading.
-                if boundary==len(tape.bid):
+                if cash:
+                    broker.advance(tape.tick(len(tape.bid)-1),int(tape.sequence[-1]),warmup=True)
+                    if boundary<len(tape.bid) and collect:observe([boundary,len(tape.bid)-1],[broker.balance,broker.balance])
+                elif boundary==len(tape.bid):
                     for a,b in zip(tape.bar_starts,np.r_[tape.bar_starts[1:],len(tape.bid)]):
                         tick=tape.tick(int(a));broker.advance(tick,int(tape.sequence[a]),warmup=True);strategy.on_tick([tick],broker)
                         strategy.current.high=max(strategy.current.high,float(tape.bid[a:b].max()))
                         strategy.current.low=min(strategy.current.low,float(tape.bid[a:b].min()))
                         strategy.current.close=float(tape.bid[b-1])
                 else:
-                    run_search_trial(tape,strategy,config,boundary,len(tape.bid),broker=broker,equity_state=state,
-                                     equity_observer=observe,continue_account=count>0)
+                    metrics,_=run_search_trial(tape,strategy,config,boundary,len(tape.bid),broker=broker,equity_state=state,
+                                     equity_observer=observe if collect else None,continue_account=count>0)
             else:
                 # UTC M20 boundaries equal broker M20 boundaries for this dataset.
                 for a,b in zip(tape.bar_starts,np.r_[tape.bar_starts[1:],len(tape.bid)]):
@@ -90,7 +100,7 @@ def execute(job,store):
         if broker:
             # Preserve open position valuation, matching the canonical engine.
             p=broker.position
-            points.append(EquityPoint(last,broker.balance,0 if p is None else p.volume*(1 if p.side=='buy' else -1),broker.equity(),broker.sequence)) if not points or points[-1].timestamp!=last else None
+            points.append(EquityPoint(last,broker.balance,0 if p is None else p.volume*(1 if p.side=='buy' else -1),broker.equity(),int(tape.sequence[-1]))) if not points or points[-1].timestamp!=last else None
             metadata={'model':'S019 M20; source Bid/Ask ticks, bounded batches, server protections before OnTick',
                       'broker':strategy.broker_spec.model_dump(mode='json'),'strategy':strategy.execution_metadata(),
                       'margin_checked':strategy.broker_spec.margin_per_lot is not None,
@@ -101,7 +111,8 @@ def execute(job,store):
                 def summary(self):
                     summary=BacktestResult.summary(self)
                     summary.update(ticks_processed=count,max_drawdown=state.max_drawdown,max_drawdown_usd=state.max_drawdown_usd,
-                                   first_timestamp=first.isoformat(),last_timestamp=last.isoformat())
+                                   first_timestamp=first.isoformat(),last_timestamp=last.isoformat(),
+                                   closed_trades=metrics.get('closed_trades',len(broker.fills)//2),profit_factor=metrics.get('profit_factor'))
                     return summary
             result=SampledResult(config,tuple(points),tuple(broker.fills),broker.pending is not None or strategy.has_deferred_entry,
                                  'ticks',metadata,tuple(broker.events))
@@ -110,14 +121,31 @@ def execute(job,store):
             if current and min(end,manifest.last_timestamp)>=current[0]+timedelta(minutes=20):
                 bars.append(Bar(current[0],*current[1:],open_timestamp=current[0],close_timestamp=current[0]+timedelta(minutes=20)))
             result=run_backtest([b for b in bars if start<=b.timestamp<end],strategy,config,warmup_bars=[b for b in bars if b.timestamp<start])
-        status('Сохранение отчёта',96)
         metadata={'dataset':manifest.model_dump(mode='json'),'dataset_id':manifest.dataset_id,**code_identity(),
                   'strategy':loaded.spec,'strategy_source_sha256':loaded.source_sha256,'parameters':request['parameters'],
                   'period':{'start_inclusive':start.isoformat(),'end_exclusive':end.isoformat()},'warmup_ticks_used':warm_count,
-                  'worker_source_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'request':request,'order_execution':result.execution_metadata,'job_id':id}
-        write_report(result,store.root/'runs'/id,metadata)
-        status('Отчёт готов',99)
-        return result.summary()
+                  'worker_source_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'request':request,'order_execution':result.execution_metadata,'simulation_source_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+        return result,metadata,{'broker':broker,'state':state}
+
+def execute(job,store):
+    from backtester.tick_data import inspect_ticks
+    from backtester.reporting import write_report
+    begun=time.monotonic();id=job['id']
+    research=job['request'].get('mode','backtest')!='backtest'
+    def status(stage,progress):
+        if store.get(id)['cancel']:raise Cancelled()
+        if time.monotonic()-begun>7200:raise TimeoutError('Расчёт превысил лимит 2 часа; уменьшите число кандидатов или период')
+        store.update(id,stage=stage,progress=min(99,progress))
+    status('Проверка целостности данных',1)
+    manifest=inspect_ticks(DATA)
+    if research:
+        from backtest_research import execute_research
+        return execute_research(job,store,simulate,manifest,status)
+    result,metadata,_=simulate(job['request'],status,manifest=manifest)
+    status('Сохранение отчёта',96)
+    write_report(result,store.root/'runs'/id,{**metadata,'job_id':id})
+    status('Отчёт готов',99)
+    return result.summary()
 
 def main():
     store=Jobs()

@@ -15,6 +15,11 @@ DATA = Path(os.environ.get('ATLAS_TICK_DATA', RUNTIME / 'data/deuidxeur'))
 ARTIFACTS = {'report.html': 'text/html', 'result.json': 'application/json', 'fills.csv': 'text/csv',
              'equity.csv': 'text/csv', 'daily_pnl.csv': 'text/csv', 'daily_pnl_server.csv': 'text/csv', 'events.csv': 'text/csv'}
 
+ARTIFACTS.update({name:'application/json' for name in ['protocol.json','selection-locks.json','windows.json','comparison.json','baseline-result.json']})
+ARTIFACTS.update({name:'text/csv' for name in ['trials.csv','baseline-fills.csv','baseline-equity.csv','baseline-daily_pnl.csv','baseline-daily_pnl_server.csv','baseline-events.csv']})
+ARTIFACTS.update({'trials.jsonl':'application/x-ndjson','selected-report.html':'text/html','baseline-report.html':'text/html'})
+AUDIT_ARTIFACTS={'protocol.json','selection-locks.json','windows.json','trials.jsonl'}
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -28,14 +33,16 @@ def catalog():
         {'id':'sma', 'name':'SMA crossover · M20 · бары Bid', 'parameters':{'fast':10,'slow':30},
          'description':'Базовая long/flat стратегия. Сигнал на закрытии M20, исполнение на следующем открытии. Спред задаётся в bps; модель в единицах инструмента, не CFD-лотах.'}],
         'dataset':None if manifest is None else {k:manifest[k] for k in ('dataset_id','spec','rows','first_timestamp','last_timestamp')},
-        'ready':manifest is not None, 'max_queued':5}
+        'ready':manifest is not None, 'max_queued':5,
+        'research':{'modes':['optimization','walk_forward'],'strategy':'s019','max_trials':32,'max_windows':12,
+                    'grid':__import__('backtest_research').GRID}}
 
 def validate(payload):
     import sys
     sys.path.insert(0,str(ENGINE / 'src')) if str(ENGINE / 'src') not in sys.path else None
     from backtester.models import BacktestConfig
     from backtester.strategy_loader import load_strategy
-    if not isinstance(payload,dict) or set(payload)-{'strategy','start','end','parameters','initial_cash','commission_bps','slippage_bps','spread_bps','warmup_days'}:
+    if not isinstance(payload,dict) or set(payload)-{'strategy','start','end','parameters','initial_cash','commission_bps','slippage_bps','spread_bps','warmup_days','mode','research'}:
         raise ValueError('Неизвестные поля запроса')
     kind=payload.get('strategy')
     if kind not in ('s019','sma'): raise ValueError('Выберите доступную стратегию')
@@ -67,8 +74,14 @@ def validate(payload):
             if not params.get('InpEntryDelaySeed'): raise ValueError('Укажите положительный seed для повторяемого расчёта')
         elif strategy.slow>10000: raise ValueError('SMA slow должен быть не больше 10000')
     from dataclasses import asdict
-    return {'strategy':kind,'start':payload['start'],'end':payload['end'],'parameters':params,
+    request={'strategy':kind,'start':payload['start'],'end':payload['end'],'parameters':params,
             'warmup_days':warmup,**{k:v for k,v in asdict(config).items() if k!='price_type'}}
+    request['mode']=payload.get('mode','backtest')
+    if request['mode']!='backtest':
+        from backtest_research import validate_research
+        return validate_research(request,payload.get('research'))
+    if 'research' in payload:raise ValueError('Настройки исследования не относятся к обычному бэктесту')
+    return request
 
 class Jobs:
     def __init__(self,root=RUNTIME):

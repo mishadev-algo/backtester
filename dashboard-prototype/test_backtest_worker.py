@@ -51,3 +51,34 @@ class WorkerTests(unittest.TestCase):
             with (jobs.root/'runs'/job['id']/'daily_pnl.csv').open() as f:
                 pnl=math.fsum(float(r['net_pnl']) for r in csv.DictReader(f))
             self.assertAlmostEqual(pnl,summary['final_equity']-100000,places=9)
+
+    def test_roll_preserves_account_and_executes_old_protection_or_pending_before_cash(self):
+        from backtester.order_engine import OrderBroker,Order
+        from backtester.s019_search import EquityState
+        from backtester.tick_data import inspect_ticks
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);source=root/'quotes.csv'
+            source.write_text('DateTime,Bid,Ask\n2026-01-01T12:00:00Z,100,102\n2026-01-01T23:59:00Z,100,102\n2026-01-02T00:00:00Z,40,42\n2026-01-02T23:59:00Z,50,52\n')
+            data=root/'data';import_ticks(source,data,TickDatasetSpec(symbol='TEST',source='synthetic roll'),TickCsvProfile(timestamp_format=None,timezone='UTC'))
+            params=dict(broker=dict(symbol='TEST',account_currency='USD',server_timezone='UTC',point=1,tick_size=1,tick_value_per_lot=1,digits=0,volume_min=1,volume_max=100,volume_step=1),news_mode='disabled',InpWorkingTimeframe=20,InpEntryDelaySeed=99)
+            config=BacktestConfig(initial_cash=100000,commission_bps=1,slippage_bps=1)
+            request=dict(strategy='s019',start='2026-01-02',end='2026-01-03',parameters=params,initial_cash=100000,commission_bps=1,spread_bps=0,slippage_bps=1,warmup_days=1)
+            with load_strategy(str(worker.ENGINE/'strategies/s019_v0_4_9.py'),'ticks') as loaded:
+                spec=loaded.factory(**params).broker_spec
+            for pending in (False,True):
+                with self.subTest(pending=pending):
+                    broker=OrderBroker(config,spec);broker.advance(Tick(datetime(2026,1,1,23,59,tzinfo=timezone.utc),100,102,sequence=1),1)
+                    order=Order(side='buy',volume=1,stop_loss=20 if pending else 80,take_profit=0,limit_price=90 if pending else None)
+                    self.assertTrue(broker.submit(order));state=EquityState(100500,max_drawdown=.001,max_drawdown_usd=100)
+                    account={'broker':broker,'state':state}
+                    with patch.object(worker,'DATA',data),patch.object(worker,'BATCH_SIZE',2):
+                        result,_,returned=worker.simulate(request,lambda *a:None,manifest=inspect_ticks(data),account=account,cash=True)
+                    self.assertIs(returned['broker'],broker);self.assertIs(returned['state'],state)
+                    self.assertIsNone(broker.position);self.assertIsNone(broker.pending)
+                    self.assertEqual(len(result.fills),2)
+                    self.assertEqual(result.fills[-1].reason,'walk_forward_roll' if pending else 'stop_loss')
+                    self.assertEqual(result.fills[-1].timestamp,datetime(2026,1,2,tzinfo=timezone.utc))
+                    self.assertEqual(sum(broker.opened_by_day.values()),1)
+                    self.assertLess(broker.balance,100000);self.assertEqual(result.summary()['final_equity'],broker.balance)
+                    self.assertAlmostEqual(state.max_drawdown_usd,100500-broker.balance)
+                    self.assertTrue(all(p.cash==broker.balance for p in result.equity))
