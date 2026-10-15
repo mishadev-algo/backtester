@@ -1,0 +1,4 @@
+# Local screenshots can contain private account and execution data.
+private/
+__pycache__/
+*.snapshot.json

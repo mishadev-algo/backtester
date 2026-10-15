@@ -1,0 +1,24 @@
+[Unit]
+Description=ATLAS workspace read-only UI
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=dashboard
+Group=dashboard
+WorkingDirectory=/opt/atlas-workspace/current
+ExecStart=/usr/bin/python3 /opt/atlas-workspace/current/serve_live.py --port 18841
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
