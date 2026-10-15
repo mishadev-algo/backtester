@@ -119,3 +119,23 @@ class S019SearchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class BatchContinuationTests(unittest.TestCase):
+    def test_chunk_boundaries_preserve_fills_and_full_tick_drawdown(self):
+        import random
+        rng=random.Random(17); price=1000.;ticks=[]
+        for i in range(14400):
+            price+=rng.choice([-8,-3,1,4,9])
+            ticks.append(Tick(datetime(2026,1,5,tzinfo=timezone.utc)+timedelta(seconds=20*i),price,price+2,sequence=i))
+        settings=dict(broker=dict(symbol='TEST',account_currency='USD',server_timezone='Europe/Kyiv',point=1,tick_size=1,tick_value_per_lot=1,digits=0,volume_min=1,volume_max=100,volume_step=1),news_mode='disabled',InpWorkingTimeframe=20,InpADRPeriods=3,InpFastEMAPeriod=2,InpSlowEMAPeriod=5,InpEntryDelaySeed=99,InpDailyPositionLimit=30,InpLimitEntryFromStop=1.0)
+        config=BacktestConfig(initial_cash=100000)
+        with load_strategy(str(STRATEGY),'ticks') as loaded:
+            reference=run_tick_backtest(ticks,loaded.factory(**settings),config)
+            strategy=loaded.factory(**settings);broker=OrderBroker(config,strategy.broker_spec);state=EquityState(config.initial_cash)
+            for begin in range(0,len(ticks),137):
+                tape=QuoteTape.from_ticks(ticks[begin:begin+137])
+                run_search_trial(tape,strategy,config,0,len(tape.bid),broker=broker,equity_state=state,continue_account=begin>0)
+            self.assertTrue(reference.fills)
+            self.assertEqual(broker.fills,list(reference.fills))
+            self.assertAlmostEqual(broker.equity(),reference.equity[-1].equity,places=10)
+            self.assertAlmostEqual(state.max_drawdown,reference.summary()['max_drawdown'],places=13)

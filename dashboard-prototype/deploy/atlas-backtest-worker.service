@@ -1,0 +1,31 @@
+[Unit]
+Description=ATLAS historical backtest worker
+After=network.target
+
+[Service]
+Type=simple
+User=dashboard
+Group=dashboard
+WorkingDirectory=/opt/atlas-workspace/current
+ExecStart=/opt/atlas-backtester/venv/bin/python /opt/atlas-workspace/current/backtest_worker.py
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=ATLAS_ENGINE_ROOT=/opt/atlas-backtester/engine
+Environment=ATLAS_BACKTEST_STATE=/var/lib/atlas-backtests
+Environment=ATLAS_TICK_DATA=/var/lib/atlas-backtests/data/deuidxeur
+ReadWritePaths=/var/lib/atlas-backtests
+ReadOnlyPaths=/var/lib/atlas-backtests/data
+Restart=on-failure
+RestartSec=5
+MemoryMax=1800M
+CPUQuota=80%
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

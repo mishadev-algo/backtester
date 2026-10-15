@@ -41,6 +41,9 @@ snapshot = LiveSnapshot()
 
 
 class LiveHandler(serve.Handler):
+    def write_allowed(self):
+        return self.headers.get('Host') == f'127.0.0.1:{self.server.server_port}' and self.headers.get('Origin') == self.server.public_origin
+
     def do_GET(self):
         # Caddy rewrites Host to this loopback listener after authenticating.
         expected = f'127.0.0.1:{self.server.server_port}'
@@ -50,6 +53,7 @@ class LiveHandler(serve.Handler):
         if origin and origin != self.server.public_origin:
             return self.respond(403, {'error': 'Origin denied'})
         path = urlsplit(self.path)
+        if serve.backtest_api.route(self, 'GET'): return
         if path.path == '/logs':
             self.send_response(302)
             self.send_header('Location', '/'+('?' + path.query if path.query else '')+'#logs')

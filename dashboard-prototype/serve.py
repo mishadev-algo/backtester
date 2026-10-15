@@ -12,13 +12,14 @@ import subprocess
 import threading
 import time
 import logs_api
+import backtest_api
 
 ROOT = Path(__file__).resolve().parent
 SOCKET = os.environ.get('ATLAS_SSH_SOCKET', '/private/tmp/atlas-vps-readonly.sock')
 COMMAND = ['ssh', '-S', SOCKET, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
            '-o', 'StrictHostKeyChecking=yes', 'root@46.225.132.195',
            'sudo -u postgres psql -X --set=ON_ERROR_STOP=1 -qAt -d dashboard']
-FILES = {'/logs.js': ('logs.js', 'text/javascript'), '/mapping-model.js': ('mapping-model.js', 'text/javascript'), '/mapping-ui.js': ('mapping-ui.js', 'text/javascript'), '/': ('index.html', 'text/html'), '/index.html': ('index.html', 'text/html'),
+FILES = {'/backtests.js': ('backtests.js', 'text/javascript'), '/backtests.css': ('backtests.css', 'text/css'), '/logs.js': ('logs.js', 'text/javascript'), '/mapping-model.js': ('mapping-model.js', 'text/javascript'), '/mapping-ui.js': ('mapping-ui.js', 'text/javascript'), '/': ('index.html', 'text/html'), '/index.html': ('index.html', 'text/html'),
          '/journey.js': ('journey.js', 'text/javascript'),
          '/journey.css': ('journey.css', 'text/css'),
          '/real.js': ('real.js', 'text/javascript'), '/real.css': ('real.css', 'text/css')}
@@ -71,6 +72,7 @@ class Handler(BaseHTTPRequestHandler):
         if host not in allowed or (origin and origin not in {'http://' + x for x in allowed}):
             return self.respond(403, {'error': 'Local access only'})
         path = urlsplit(self.path)
+        if backtest_api.route(self, 'GET'): return
         if path.path == '/api/logs':
             try:
                 filters = logs_api.parse_filters(parse_qs(path.query, keep_blank_values=True))
@@ -90,10 +92,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(200, (ROOT / name).read_bytes(), mime)
         return self.respond(404, {'error': 'Not found'})
 
-    def do_POST(self):
-        self.respond(405, {'error': 'Read-only prototype'})
+    def write_allowed(self):
+        allowed = {f'http://127.0.0.1:{self.server.server_port}', f'http://localhost:{self.server.server_port}'}
+        return 'http://' + self.headers.get('Host', '') in allowed and self.headers.get('Origin') in allowed
 
-    do_PUT = do_DELETE = do_PATCH = do_POST
+    def do_POST(self):
+        if not getattr(self, 'path', '').startswith('/api/backtest/'):
+            return self.respond(405, {'error': 'Method not allowed'})
+        if not self.write_allowed():
+            return self.respond(403, {'error': 'Same-origin request required'})
+        backtest_api.route(self, 'POST')
+
+    def do_PUT(self):
+        self.respond(405, {'error': 'Method not allowed'})
+
+    do_DELETE = do_PATCH = do_PUT
 
     def log_message(self, fmt, *args):
         pass  # Keep account data and URLs out of terminal logs.

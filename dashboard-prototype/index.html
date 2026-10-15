@@ -17,6 +17,7 @@
 </style>
 <link rel="stylesheet" href="journey.css">
 <link rel="stylesheet" href="real.css">
+<link rel="stylesheet" href="backtests.css">
 </head>
 <body>
 <div class="shell"><aside class="sidebar" id="sidebar"><div class="brand"><svg class="brandmark" viewBox="0 0 32 35"><path d="M16 2 30 31H23L16 16 9 31H2Z" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="m11 25 5-10 5 10" fill="none" stroke="currentColor" stroke-width="2"/></svg><div><strong>ATLAS</strong><small>TRADING WORKSPACE</small></div></div><div class="navlabel">РАБОЧЕЕ ПРОСТРАНСТВО</div><nav class="nav" id="mainnav"></nav><div class="navlabel">ОПЕРАЦИИ</div><nav class="nav" id="opsnav"></nav><div class="sidebar-foot"><div class="env"><strong><span class="dot"></span>Prototype workspace</strong>Демонстрационные данные<br>Локальная версия · 01</div><div class="avatar"><b>O</b><div><span>Olli</span><small>Personal workspace</small></div></div></div></aside><main class="main"><header class="topbar"><div class="row"><button class="iconbtn mobilemenu" id="menu" aria-label="Открыть меню">☰</button><div class="crumb">Workspace <b>/ <span id="crumb">Обзор</span></b></div></div><div class="top-actions"><button class="search" id="search">⌕ <span>Найти стратегию или раздел</span><kbd>⌘ K</kbd></button><span class="proto">DEMO / ПРОТОТИП</span><button class="iconbtn" id="about" aria-label="О прототипе">?</button></div></header><div class="page" id="page"></div></main></div><div id="overlay"></div><div id="toast" role="status" aria-live="polite"></div>
@@ -69,6 +70,7 @@ try{let saved=JSON.parse(localStorage.getItem('atlas-demo-weights'));if(Array.is
 <script src="real.js"></script>
 <script src="logs.js"></script>
 <script src="mapping-ui.js"></script>
+<script src="backtests.js"></script>
 <script>
 state.page=[...navs,...ops].some(x=>x[0]===location.hash.slice(1))?location.hash.slice(1):'overview';render();
 </script>

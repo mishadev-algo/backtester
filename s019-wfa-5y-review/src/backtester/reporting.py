@@ -130,7 +130,7 @@ def _write_report_files(result: BacktestResult, output: Path, metadata: dict | N
         "source_points": len(result.equity), "rendered_points": len(chart),
         "max_points": CHART_MAX_POINTS,
         "method": "bucket equity min/max and worst full-resolution drawdown; first/last retained",
-        "data_exports": "all original equity points retained in result.json and equity.csv",
+        "data_exports": result.execution_metadata.get("equity_storage", "all original equity points retained in result.json and equity.csv"),
     }
     _write_json_report(result, output / "result.json", report_metadata, summary)
     for name, rows, fields in (
@@ -189,4 +189,7 @@ def _write_report_files(result: BacktestResult, output: Path, metadata: dict | N
     if len(chart) < len(result.equity):
         figure.add_annotation(text=f"Chart: {len(chart):,} selected points from {len(result.equity):,}; exports contain every point",
                               xref="paper", yref="paper", x=0, y=1.12, showarrow=False)
+    if result.execution_metadata.get("equity_storage"):
+        figure.add_annotation(text="Tick execution; equity export retains event boundaries and extrema. Open positions marked at end.",
+                              xref="paper", yref="paper", x=0, y=-0.2, showarrow=False)
     figure.write_html(output / "report.html", include_plotlyjs=True, full_html=True)

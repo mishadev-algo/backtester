@@ -1,5 +1,5 @@
 [Unit]
-Description=ATLAS workspace read-only UI
+Description=ATLAS workspace and backtest API
 After=network.target postgresql.service
 Requires=postgresql.service
 
@@ -8,9 +8,14 @@ Type=simple
 User=dashboard
 Group=dashboard
 WorkingDirectory=/opt/atlas-workspace/current
-ExecStart=/usr/bin/python3 /opt/atlas-workspace/current/serve_live.py --port 18841
+ExecStart=/opt/atlas-backtester/venv/bin/python /opt/atlas-workspace/current/serve_live.py --port 18841
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
+Environment=ATLAS_ENGINE_ROOT=/opt/atlas-backtester/engine
+Environment=ATLAS_BACKTEST_STATE=/var/lib/atlas-backtests
+Environment=ATLAS_TICK_DATA=/var/lib/atlas-backtests/data/deuidxeur
+ReadWritePaths=/var/lib/atlas-backtests
+MemoryMax=600M
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

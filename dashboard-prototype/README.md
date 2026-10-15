@@ -126,3 +126,13 @@ period, currency, snapshot time and limitations.
 ### Множественный выбор в истории
 
 Счета, стратегии и инструменты поддерживают поиск и выбор нескольких значений галочками. Кнопки «Выбрать все» / «Снять все» действуют на весь список, включая скрытые поиском строки. Выбор применяется кнопкой «Применить»: внутри одного фильтра используется OR, между фильтрами — AND. Пустой выбор даёт пустую выборку; общий сброс возвращает все значения и всю историю. Суммы, графики, журнал и его CSV используют одну выборку. Списки вариантов стабильны в пределах валюты; смена счетов не сбрасывает выбранные стратегии и инструменты. Сверка бэктеста остаётся отдельной явной парой.
+
+## Real historical backtests
+
+The Backtests section now opens the real experiment workspace. Imported reports remain under a separate tab. Bundled choices are S-019 v0.4.9 M20 (source Bid/Ask execution) and a basic SMA crossover on M20 Bid bars (next-open execution and configured spread). The form accepts a UTC inclusive start / exclusive end, starting cash, prior warmup days, costs and strategy parameters. Common parameters have individual controls; the full JSON and contract specification remain editable.
+
+`backtest_jobs.py` stores a bounded SQLite queue. `backtest_worker.py` runs under a separate supervised service, preserving strategy/broker state across bounded quote batches. Progress follows the processed history, including warmup; reports persist after browser closure. Cancellation is cooperative between batches. Queued jobs survive restarts; an interrupted active job becomes failed and can be started again. Historical reports are immutable. There is no WFA launch UI yet.
+
+The worker retains equity event boundaries and extrema, while drawdown/execution inspect source quotes. Equity CSV is compact, not a complete quote-by-quote export. Daily PnL reconciles to final marked equity; open positions are not forcibly liquidated. S-019 news is disabled and contract assumptions are visible in the form and report. SMA uses a different, explicitly labelled unit/bar model.
+
+API routes: GET `/api/backtest/catalog`, GET/POST `/api/backtest/jobs`, GET `/api/backtest/jobs/<id>`, POST `/api/backtest/jobs/<id>/cancel`, GET `/api/backtest/jobs/<id>/files/<allowlisted-name>`. Writes require the exact allowed Host and Origin and JSON requests. Requests cannot choose filesystem paths, Python files or shell commands. Existing trading snapshots and logs remain read-only.

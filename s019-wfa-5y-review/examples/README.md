@@ -1,0 +1,1 @@
+These small synthetic fixtures support the existing import/CLI tests. The review archive omitted its original examples directory; these fixtures reconstruct the documented test cases, not market history. Production runs use the separately verified QDM dataset.

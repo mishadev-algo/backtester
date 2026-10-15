@@ -13,7 +13,7 @@ for(const a of audit.rows.filter(a=>a.applied)){
  seed[k]={target:c.target,fingerprint:JSON.stringify([d.magic,d.comment,d.position_id,d.symbol,d.entry,c.target,c.method,c.anchor,anchor.magic,anchor.comment,anchor.strategy,'v1'])};
 }
 fs.mkdirSync(out,{recursive:true,mode:0o700});
-const files=['index.html','real.js','real.css','journey.js','journey.css','mapping-model.js','mapping-ui.js','serve.py','serve_live.py','read_snapshot.sql','logs.js','logs_api.py','read_logs.sql','classify_logs.sql'];
+const files=['backtest_api.py','backtest_jobs.py','backtest_worker.py','backtests.js','backtests.css','index.html','real.js','real.css','journey.js','journey.css','mapping-model.js','mapping-ui.js','serve.py','serve_live.py','read_snapshot.sql','logs.js','logs_api.py','read_logs.sql','classify_logs.sql'];
 for(const f of files){
  let text=fs.readFileSync(path.join(__dirname,'..',f),'utf8');
  if(f==='index.html')text=text.replace('<script src="real.js">','<script src="live-config.js"></script>\n<script src="real.js">');

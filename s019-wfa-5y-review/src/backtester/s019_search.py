@@ -86,7 +86,7 @@ class EquityState:
 
 def run_search_trial(tape: QuoteTape, strategy, config: BacktestConfig, start: int, end: int, *, warmup_start=0,
                      broker: OrderBroker | None = None, equity_state: EquityState | None = None,
-                     equity_observer=None):
+                     equity_observer=None, continue_account=False):
     """Fresh account, past-only warmup, all-quote execution/marking for S-019.
 
     Restricted to M20 with minute-aligned broker offsets. The strategy must
@@ -103,8 +103,10 @@ def run_search_trial(tape: QuoteTape, strategy, config: BacktestConfig, start: i
             raise ValueError("broker offset must align M20 boundaries with UTC")
     if broker is None:
         broker = OrderBroker(config, strategy.broker_spec)
-    elif broker.position is not None or broker.pending is not None or broker.spec != strategy.broker_spec:
+    elif broker.spec != strategy.broker_spec or (not continue_account and (broker.position is not None or broker.pending is not None)):
         raise ValueError("reused broker must be flat, have no pending order, and use the same contract")
+    if continue_account and (start != 0 or equity_state is None):
+        raise ValueError("continuation requires start=0 and the prior equity state")
     state = equity_state if equity_state is not None else EquityState(config.initial_cash)
     initial_balance = broker.balance
     peak, max_dd, max_dd_money = state.peak, state.max_drawdown, state.max_drawdown_usd
